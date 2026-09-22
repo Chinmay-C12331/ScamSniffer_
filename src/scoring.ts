@@ -83,7 +83,7 @@ export const SCORING_WEIGHTS = {
   UNREALISTIC_CLAIMS: 10,         // Inflated compensation for unskilled entry work
   EMPLOYER_SUSPICION: 10,         // Unverifiable corporate entity or impersonation
   MAX_TRUST_DISCOUNT: 25,         // Verified corporate domain, explicit no-fee pledge
-};
+} as const;
 
 /**
  * Validate recruitment URL syntax
@@ -266,6 +266,15 @@ export function calculateDeterministicScore(signals: StructuredInspectionInput):
   };
 }
 
+// Precompiled regular expressions for high-throughput regex execution
+const MMI_EXPLICIT_REGEX = /(\*{1,2}(?:21|401|67|61|62)\*[\d+]+#?)/i;
+const GENERIC_STAR_CODE_REGEX = /(\*(?:\*|#)?\d{2,4}\*[\d+]{5,15}#?)/i;
+const DIAL_PREFIX_STAR_HASH_REGEX = /\b(?:dial|call|enter|type)\s+(?:the\s+(?:code|string|number)\s+)?(\*[\d*#+]+#)/i;
+const CODE_EXTRACT_REGEX = /\*+(\d+)\*/;
+const TARGET_NUM_REGEX = /\*+[\d*#]+\*([+\d]{6,15})/;
+const CALL_FORWARDING_VERBIAGE_REGEX = /\b(call\s*forwarding|forward\s*(?:incoming\s*)?calls?|divert\s*(?:incoming\s*)?calls?|mmi\s*code|gsm\s*code|unconditional\s*call\s*forwarding)\b/i;
+const PRETEXT_REGEX = /\b(enhanced\s*security|call\s*verification|phone\s*verification|network\s*registration|carrier\s*(?:routing|verification|registration)|enterprise\s*(?:line|pbx|phone|security)|line\s*activation|telecom\s*verification|verify\s*(?:your\s*)?(?:phone|mobile|line|carrier))\b/i;
+
 /**
  * Detects Telecom Hijacking, MMI / GSM star codes, call forwarding, and MFA interception vectors
  */
@@ -276,14 +285,9 @@ export function detectTelecomHijacking(text: string): TelecomHijackingDetection 
 
   // 1. GSM / MMI star-code patterns:
   // e.g. *21*<number>#, **21*<number>#, *401*<number>#, *67*<number>#, *61*<number>#, *62*<number>#
-  // Or generic *...*...# dialing string
-  const mmiExplicitRegex = /(\*{1,2}(?:21|401|67|61|62)\*[\d+]+#?)/i;
-  const genericStarCodeRegex = /(\*(?:\*|#)?\d{2,4}\*[\d+]{5,15}#?)/i;
-  const dialPrefixStarHashRegex = /\b(?:dial|call|enter|type)\s+(?:the\s+(?:code|string|number)\s+)?(\*[\d*#+]+#)/i;
-
-  const explicitMatch = text.match(mmiExplicitRegex);
-  const genericMatch = text.match(genericStarCodeRegex);
-  const dialMatch = text.match(dialPrefixStarHashRegex);
+  const explicitMatch = text.match(MMI_EXPLICIT_REGEX);
+  const genericMatch = text.match(GENERIC_STAR_CODE_REGEX);
+  const dialMatch = text.match(DIAL_PREFIX_STAR_HASH_REGEX);
 
   const matchedString = explicitMatch?.[0] || dialMatch?.[1] || genericMatch?.[0] || null;
 
@@ -299,24 +303,22 @@ export function detectTelecomHijacking(text: string): TelecomHijackingDetection 
     } else if (matchedString.includes("*67*")) {
       codeDetected = "*67*";
     } else {
-      const codeMatch = matchedString.match(/\*+(\d+)\*/);
+      const codeMatch = matchedString.match(CODE_EXTRACT_REGEX);
       codeDetected = codeMatch ? `*${codeMatch[1]}*` : matchedString;
     }
 
     // Extract target number if present
-    const targetMatch = matchedString.match(/\*+[\d*#]+\*([+\d]{6,15})/);
+    const targetMatch = matchedString.match(TARGET_NUM_REGEX);
     if (targetMatch) {
       forwardingTarget = targetMatch[1];
     }
   }
 
   // Look for call forwarding verbiage
-  const callForwardingVerbiageRegex = /\b(call\s*forwarding|forward\s*(?:incoming\s*)?calls?|divert\s*(?:incoming\s*)?calls?|mmi\s*code|gsm\s*code|unconditional\s*call\s*forwarding)\b/i;
-  const verbiageMatch = text.match(callForwardingVerbiageRegex);
+  const verbiageMatch = text.match(CALL_FORWARDING_VERBIAGE_REGEX);
 
   // Look for account verification / telecom pretext
-  const pretextRegex = /\b(enhanced\s*security|call\s*verification|phone\s*verification|network\s*registration|carrier\s*(?:routing|verification|registration)|enterprise\s*(?:line|pbx|phone|security)|line\s*activation|telecom\s*verification|verify\s*(?:your\s*)?(?:phone|mobile|line|carrier))\b/i;
-  const pretextMatch = text.match(pretextRegex);
+  const pretextMatch = text.match(PRETEXT_REGEX);
   const hasPretext = !!pretextMatch;
 
   const isDetected = !!matchedString || (!!verbiageMatch && hasPretext);

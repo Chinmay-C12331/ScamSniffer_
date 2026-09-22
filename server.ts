@@ -24,38 +24,45 @@ app.use(express.json({ limit: "10mb" }));
 let genAiClient: GoogleGenAI | null = null;
 const modelCooldownMap = new Map<string, number>();
 
+// Precompiled regex patterns for high-throughput heuristic fallback evaluation
+const PAYMENT_FALLBACK_REGEX = /\b(zelle|cashapp|cash\s*app|venmo|usdt|crypto|cryptocurrency|wire\s*transfer|western\s*union|moneygram|gift\s*card|security\s*deposit|refundable\s*deposit|equipment\s*(fee|deposit)|processing\s*fee|training\s*fee|courier\s*fee|check\s*deposit)\b/i;
+const URGENCY_FALLBACK_REGEX = /\b(within\s*24\s*hours|immediate(ly)?|urgently?|urgent\s*response|forfeiture|forfeit|expires\s*(today|tomorrow)|by\s*5:?00\s*pm|act\s*now)\b/i;
+const SENSITIVE_FALLBACK_REGEX = /\b(ssn|social\s*security|routing\s*number|bank\s*details|passport\s*(scan|copy)?|identity\s*card|driver'?s\s*license|date\s*of\s*birth|proof\s*of\s*transaction)\b/i;
+const TELEGRAM_FALLBACK_REGEX = /\b(telegram|whatsapp|signal|text\s*interview)\b/i;
+const FREE_EMAIL_REGEX = /@(gmail|yahoo|hotmail|outlook)\.com/i;
+const SUSPICIOUS_DOMAIN_REGEX = /\.(xyz|top|work|click|gq|cf|ml|tk|careers-onboarding)\b/i;
+const ESTABLISHED_CORP_EMAIL_REGEX = /@(stripe|google|microsoft|amazon|apple|meta|netflix|salesforce)\.com/i;
+const ESTABLISHED_CORP_URL_REGEX = /(stripe|google|microsoft|amazon|apple|meta)\.com/i;
+
 function generateDeterministicFallbackAnalysis(text: string, url: string, sender?: string, title?: string) {
   const combined = `${title || ""} ${sender || ""} ${url || ""} ${text || ""}`.toLowerCase();
 
   // Payment detection
-  const paymentRegex = /\b(zelle|cashapp|cash\s*app|venmo|usdt|crypto|cryptocurrency|wire\s*transfer|western\s*union|moneygram|gift\s*card|security\s*deposit|refundable\s*deposit|equipment\s*(fee|deposit)|processing\s*fee|training\s*fee|courier\s*fee|check\s*deposit)\b/i;
-  const paymentMatch = combined.match(paymentRegex);
+  const paymentMatch = combined.match(PAYMENT_FALLBACK_REGEX);
   const hasPayment = !!paymentMatch;
 
   // Urgency detection
-  const urgencyRegex = /\b(within\s*24\s*hours|immediate(ly)?|urgently?|urgent\s*response|forfeiture|forfeit|expires\s*(today|tomorrow)|by\s*5:?00\s*pm|act\s*now)\b/i;
-  const urgencyMatch = combined.match(urgencyRegex);
+  const urgencyMatch = combined.match(URGENCY_FALLBACK_REGEX);
   const hasUrgency = !!urgencyMatch;
 
   // Sensitive data detection
-  const sensitiveRegex = /\b(ssn|social\s*security|routing\s*number|bank\s*details|passport\s*(scan|copy)?|identity\s*card|driver'?s\s*license|date\s*of\s*birth|proof\s*of\s*transaction)\b/i;
-  const sensitiveMatch = combined.match(sensitiveRegex);
+  const sensitiveMatch = combined.match(SENSITIVE_FALLBACK_REGEX);
   const hasSensitive = !!sensitiveMatch;
 
   // Telegram / Unofficial channel
-  const telegramMatch = combined.match(/\b(telegram|whatsapp|signal|text\s*interview)\b/i);
+  const telegramMatch = combined.match(TELEGRAM_FALLBACK_REGEX);
 
   // Telecom Hijacking / MMI star-codes & call forwarding detection
   const telecomAnalysis = detectTelecomHijacking(`${title || ""} ${sender || ""} ${url || ""} ${text || ""}`);
 
   // Free email
-  const isFreeEmail = !!(sender && /@(gmail|yahoo|hotmail|outlook)\.com/i.test(sender)) || /@(gmail|yahoo|hotmail|outlook)\.com/i.test(combined);
+  const isFreeEmail = !!(sender && FREE_EMAIL_REGEX.test(sender)) || FREE_EMAIL_REGEX.test(combined);
 
   // Suspicious domain
-  const hasSuspiciousDomain = !!(url && /\.(xyz|top|work|click|gq|cf|ml|tk|careers-onboarding)\b/i.test(url));
+  const hasSuspiciousDomain = !!(url && SUSPICIOUS_DOMAIN_REGEX.test(url));
 
   // Positive trust signals
-  const isEstablishedCorporate = !!(sender && /@(stripe|google|microsoft|amazon|apple|meta|netflix|salesforce)\.com/i.test(sender)) || !!(url && /(stripe|google|microsoft|amazon|apple|meta)\.com/i.test(url));
+  const isEstablishedCorporate = !!(sender && ESTABLISHED_CORP_EMAIL_REGEX.test(sender)) || !!(url && ESTABLISHED_CORP_URL_REGEX.test(url));
   const hasNoFeeDisclaimer = combined.includes("zero cost") || combined.includes("will never ask you for money") || combined.includes("no fees");
   const hasStandardDoc = combined.includes("docusign") || combined.includes("proprietary information agreement") || combined.includes("epia");
 
